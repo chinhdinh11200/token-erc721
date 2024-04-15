@@ -1,0 +1,42 @@
+{
+  "name": "TokenERC721",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "local": "npx hardhat node",
+    "compile": "npx hardhat clean && npx hardhat compile",
+    "lock": "npx hardhat ignition deploy ignition/modules/Lock.ts",
+    "deploy_ccc_token": "hardhat run --network bscTestnet scripts/deploy-CCCToken.ts",
+    "verify_ccc_token": "hardhat verify --network bscTestnet --constructor-args ./scripts/argument/empty.ts 0x9A65e90Ee8728dC934488890Ab16B1cbaf1082DD",
+    "deploy_beki_nft": "hardhat run --network bscTestnet scripts/deploy-BekiNFT.ts",
+    "deploy": "hardhat run --network marketplace scripts/deploy.ts",
+    "account": "hardhat run --network marketplace scripts/account.ts"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
+    "@nomicfoundation/hardhat-ethers": "^3.0.0",
+    "@nomicfoundation/hardhat-ignition": "^0.15.0",
+    "@nomicfoundation/hardhat-ignition-ethers": "^0.15.0",
+    "@nomicfoundation/hardhat-network-helpers": "^1.0.0",
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@nomicfoundation/hardhat-verify": "^2.0.0",
+    "@typechain/ethers-v6": "^0.5.0",
+    "@typechain/hardhat": "^9.0.0",
+    "@types/chai": "^4.2.0",
+    "@types/mocha": ">=9.1.0",
+    "@types/node": ">=18.0.0",
+    "chai": "^4.2.0",
+    "ethers": "^6.4.0",
+    "hardhat": "^2.22.2",
+    "hardhat-gas-reporter": "^1.0.8",
+    "solidity-coverage": "^0.8.0",
+    "ts-node": ">=8.0.0",
+    "typechain": "^8.3.0",
+    "typescript": ">=4.5.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.2",
+    "dotenv": "^16.4.5"
+  }
+}
