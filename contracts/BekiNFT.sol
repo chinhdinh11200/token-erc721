@@ -2,81 +2,68 @@
 pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "contracts/Marketplace.sol";
 
-contract BekiNFT is ERC721, ERC721Enumerable, Ownable {
+contract BekiNFT is ERC721, Ownable {
     uint256 private _nextTokenId;
-    enum Tier {Tier1, Tier2, Tier3}
-    uint256[] private nftSelled;
-    mapping(Tier => uint256) public tierPrice;
-
-    Marketplace marketplace;
+    mapping(uint256 => string) private tokenUris;
+    mapping(uint16 => uint256) private tierPrices;
+    mapping(uint16 => uint16) private tierDiscounts;
+    mapping(uint256 => uint16) private tokenTiers;
+    address private marketplaceAddress;
     
     constructor(address initialOwner) ERC721("BekiNFT", "BKNFT") Ownable(initialOwner) {
-        tierPrice[Tier.Tier1] = 1000;
-        tierPrice[Tier.Tier2] = 2000;
-        tierPrice[Tier.Tier3] = 3000;
+        tierPrices[1] = 1000;
+        tierPrices[2] = 2000;
+        tierPrices[3] = 3000;
+        tierDiscounts[1] = 20;
+        tierDiscounts[2] = 30;
+        tierDiscounts[3] = 50;
     }
 
-    function safeMint(address to) public onlyOwner
+    function safeMint(string memory _uri, uint16 _tier, address _to) public onlyOwner
     {
+        require(bytes(_uri).length > 0, "Uri can not be empty!");
         uint256 tokenId =_nextTokenId++;
-        _safeMint(to, tokenId);
+        tokenTiers[tokenId] = _tier;
+        tokenUris[tokenId] = _uri;
+        _safeMint(_to, tokenId);
     }
 
-    function connectToMarket(address marketAddress) public 
+    function setMarketplaceAddress(address _marketplaceAddress) public 
     {
-        marketplace = Marketplace(marketAddress);
+        require(_marketplaceAddress != address(0), "Invalid marketplace address.");
+        marketplaceAddress = _marketplaceAddress;
     }
 
-    function sellNFT(uint256 tokenId, Tier tier, uint256 discount) public 
+    function setTierPrice(uint16 _tier, uint256 _price) public
     {
-        marketplace.addNFT(msg.sender, tokenId, uint256(tier), discount);
+        tierPrices[_tier] = _price;
     }
 
-    function setDiscount(uint256 tokenId, uint256 discount) public 
+    function setTierDiscount(uint16 _tier, uint16 _discount) public
     {
-        marketplace.discountNFT(tokenId, discount);
+        tierDiscounts[_tier] = _discount;
     }
 
-    function getAllTokenSelled() public view returns(uint[] memory)
+    function setTokenTier(uint256 _tokenId, uint16 _tier) public
     {
-        return nftSelled;
+        tokenTiers[_tokenId] = _tier;
     }
 
-    function addTokenSelled(uint256 tokenId) external 
+    function getTokenPrice(uint256 _tokenId) public view returns (uint256)
     {
-        nftSelled.push(tokenId);
+        uint16 tier = tokenTiers[_tokenId];
+        return tierPrices[tier];
     }
 
-    function approveForMarketplace(address from, address to, uint256 tokenId) external 
+    function getTokenTier(uint256 _tokenId) public view returns (uint16)
     {
-        _approve(to, tokenId, from);
+        return tokenTiers[_tokenId];
     }
 
-    function _update(address to, uint256 tokenId, address auth)
-    internal 
-    override (ERC721, ERC721Enumerable)
-    returns (address)
+    function getTotalNFT() public view virtual returns (uint256)
     {
-        return super._update(to, tokenId, auth);
-    }
-
-    function _increaseBalance(address account, uint128 value)
-        internal
-        override(ERC721, ERC721Enumerable)
-    {
-        super._increaseBalance(account, value);
-    }
-
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override(ERC721, ERC721Enumerable)
-        returns (bool)
-    {
-        return super.supportsInterface(interfaceId);
+        return _nextTokenId;
     }
 }

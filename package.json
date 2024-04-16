@@ -7,11 +7,14 @@
     "local": "npx hardhat node",
     "compile": "npx hardhat clean && npx hardhat compile",
     "lock": "npx hardhat ignition deploy ignition/modules/Lock.ts",
-    "deploy_ccc_token": "hardhat run --network bscTestnet scripts/deploy-CCCToken.ts",
-    "verify_ccc_token": "hardhat verify --network bscTestnet --constructor-args ./scripts/argument/empty.ts 0x9A65e90Ee8728dC934488890Ab16B1cbaf1082DD",
-    "deploy_beki_nft": "hardhat run --network bscTestnet scripts/deploy-BekiNFT.ts",
+    "deploy_test": "hardhat run --network bscTestnet scripts/deploy-testnet.ts",
+    "verify_test": "hardhat verify --network bscTestnet 0x9340350Af64022Db695ba1CFe28187773261091A 0xC4F0FA518259aB003B1D4D20fbC62D58bA9E9A67 0x7eE55F6D448dDc564153cdd59f90911A71E75b40",
     "deploy": "hardhat run --network marketplace scripts/deploy.ts",
-    "account": "hardhat run --network marketplace scripts/account.ts"
+    "account": "hardhat run --network bscTestnet scripts/account.ts",
+    "mint-nft": "hardhat run --network bscTestnet scripts/mint-BekiNFT.ts",
+    "mint-token": "hardhat run --network bscTestnet scripts/mint-BekiToken.ts",
+    "connect-market": "hardhat run --network bscTestnet scripts/connect-market.ts",
+    "buy-nft": "hardhat run --network bscTestnet scripts/buy-nft.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",

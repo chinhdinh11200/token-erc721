@@ -4,7 +4,7 @@ import { HardhatUserConfig, task } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 import "hardhat-gas-reporter";
 
-const { PRIVATE_KEY, API_BSCSCAN } = process.env;
+const { PRIVATE_KEY, PRIVATE_KEY_BUYER, API_BSCSCAN } = process.env;
 
 const config: HardhatUserConfig = {
   solidity: "0.8.20",
@@ -19,16 +19,13 @@ const config: HardhatUserConfig = {
       chainId: 97,
       gasPrice: 10000000000,
       // accounts: [`0xdade6b2d296d18649268b3434aab6d686d2c6140bf0b167b3bbc8c2a7798dc45`],
-      accounts: [`0x${PRIVATE_KEY}`],
+      accounts: [`0x${PRIVATE_KEY}`, `0x${PRIVATE_KEY_BUYER}`],
     },
   },
   etherscan: {
     apiKey: {
       bscTestnet: API_BSCSCAN || "M6U7W1BD438WZSKM66BNGSWF9MPQVJ7I8E",
     },
-  },
-  sourcify: {
-    enabled: true,
   },
   paths: {
     sources: "./contracts",
