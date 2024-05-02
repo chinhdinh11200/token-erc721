@@ -9,12 +9,14 @@
     "lock": "npx hardhat ignition deploy ignition/modules/Lock.ts",
     "deploy_test": "hardhat run --network bscTestnet scripts/deploy-testnet.ts",
     "verify_test": "hardhat verify --network bscTestnet 0x9340350Af64022Db695ba1CFe28187773261091A 0xC4F0FA518259aB003B1D4D20fbC62D58bA9E9A67 0x7eE55F6D448dDc564153cdd59f90911A71E75b40",
-    "deploy": "hardhat run --network marketplace scripts/deploy.ts",
     "account": "hardhat run --network bscTestnet scripts/account.ts",
-    "mint-nft": "hardhat run --network bscTestnet scripts/mint-BekiNFT.ts",
-    "mint-token": "hardhat run --network bscTestnet scripts/mint-BekiToken.ts",
-    "connect-market": "hardhat run --network bscTestnet scripts/connect-market.ts",
-    "buy-nft": "hardhat run --network bscTestnet scripts/buy-nft.ts"
+    "nft": "hardhat run scripts/deploy-nft.ts",
+    "token": "hardhat run scripts/deploy-token.ts",
+    "market": "hardhat run scripts/deploy-market.ts",
+    "deploy": "yarn nft && yarn token && yarn market",
+    "verify": "hardhat verify --network bscTestnet 0x6f14F89AB6745F7088Bc6F34864CeDC12A743603 0x737DcAc2c2b401145698DeBdA998867AB9BB6c29 0xa5c18EaBd9DCb96A20b004360793F4415e41d63d 0x0273AbB81E0dc3BbD4e69Ed89C4Fc6ce488986E3",
+    "test": "hardhat run scripts/test-market.ts",
+    "draft": "hardhat run --network marketplace scripts/draft.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",

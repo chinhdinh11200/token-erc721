@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.8;
+
+interface IBill {
+    event PaidBill(
+        address indexed wallet,
+        uint256 indexed monthId,
+        uint256 timestamp,
+        uint256 currentMonthPaid,
+        uint256 lastMonthUnpaid,
+        uint256 feeToken
+    );
+
+    function updateBuy(address wallet, uint256 nftId) external;
+    function updateStake(uint256 nftId) external;
+
+    function pay() external;
+    function getCompoundInterest(address wallet, uint256 monthId) external view returns (uint256);
+    function getUnpaidCompoundInterest(address wallet, uint256 monthId) external view returns (uint256);
+    function getCurrentFeePercent() external view returns (uint256);
+    function getTotalBillValue(address wallet) external view returns (uint256);
+    function calcCommissionPaid(
+        address wallet,
+        uint256 amount,
+        uint256 startTimestamp,
+        uint256 endTimestamp
+    ) external view returns (uint256);
+
+    function getMonth(uint256 currentTimestamp) external view returns (uint256);
+    function getStartMonthTimestamp(uint256 monthId) external view returns (uint256);
+    function getEndMonthTimestamp(uint256 monthId) external view returns (uint256);
+
+    function getEquipEarnable(
+        uint256 nftId,
+        uint256 startTimestamp,
+        uint256 endTimestamp
+    ) external view returns (uint256);
+}

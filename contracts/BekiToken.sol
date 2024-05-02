@@ -21,7 +21,7 @@ contract BekiToken is ERC20, Ownable, ERC20Permit {
         _approve(from, to, decimalToken(amount));
     }
 
-    function decimalToken(uint256 amount) public returns (uint256 memory){
-        return amount * 10 ** decimals();
+    function decimalToken(uint256 amount) public view /* pure */ returns (uint256){
+        return amount * 10 ** decimals(); //1e18;
     }
 }
