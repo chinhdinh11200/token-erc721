@@ -13,11 +13,15 @@ contract BekiToken is ERC20, Ownable, ERC20Permit {
     {}
 
     function mint(address to, uint256 amount) public onlyOwner {
-        _mint(to, amount);
+        _mint(to, decimalToken(amount));
     }
 
     function apporveForMaketplace(address from, address to, uint256 amount) external 
     {
-        _approve(from, to, amount);
+        _approve(from, to, decimalToken(amount));
+    }
+
+    function decimalToken(uint256 amount) public view /* pure */ returns (uint256){
+        return amount * 10 ** decimals(); //1e18;
     }
 }

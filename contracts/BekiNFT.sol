@@ -2,81 +2,91 @@
 pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "contracts/Marketplace.sol";
+import "hardhat/console.sol";
 
-contract BekiNFT is ERC721, ERC721Enumerable, Ownable {
+contract BekiNFT is ERC721, Ownable {
     uint256 private _nextTokenId;
-    enum Tier {Tier1, Tier2, Tier3}
-    uint256[] private nftSelled;
-    mapping(Tier => uint256) public tierPrice;
+    mapping(uint256 => string) private tokenUris;
+    mapping(uint16 => uint256) private tierPrices;
+    mapping(uint16 => uint16) private tierDiscounts;
+    mapping(uint256 => uint16) private tokenDiscounts;
+    mapping(uint256 => uint16) private tokenTiers;
+    mapping(uint256 => uint256) private priceTokenBuy;
 
-    Marketplace marketplace;
-    
-    constructor(address initialOwner) ERC721("BekiNFT", "BKNFT") Ownable(initialOwner) {
-        tierPrice[Tier.Tier1] = 1000;
-        tierPrice[Tier.Tier2] = 2000;
-        tierPrice[Tier.Tier3] = 3000;
+    constructor(
+        address _initialOwner
+    ) ERC721("BekiNFT", "BKNFT") Ownable(_initialOwner) {
+        tierPrices[1] = 1000;
+        tierPrices[2] = 2000;
+        tierPrices[3] = 3000;
+        tierDiscounts[1] = 1000;
+        tierDiscounts[2] = 2000;
+        tierDiscounts[3] = 3000;
     }
 
-    function safeMint(address to) public onlyOwner
-    {
-        uint256 tokenId =_nextTokenId++;
-        _safeMint(to, tokenId);
+    function safeMint(
+        string memory _uri,
+        uint16 _tier,
+        address _to
+    ) public onlyOwner {
+        require(bytes(_uri).length > 0, "NFT: Uri can not be empty!");
+        uint256 tokenId = _nextTokenId++;
+        tokenTiers[tokenId] = _tier;
+        tokenUris[tokenId] = _uri;
+        tokenDiscounts[tokenId] = 0;
+        _safeMint(_to, tokenId);
     }
 
-    function connectToMarket(address marketAddress) public 
-    {
-        marketplace = Marketplace(marketAddress);
+    function setTierPrice(uint16 _tier, uint256 _price) external onlyOwner {
+        tierPrices[_tier] = _price;
     }
 
-    function sellNFT(uint256 tokenId, Tier tier, uint256 discount) public 
-    {
-        marketplace.addNFT(msg.sender, tokenId, uint256(tier), discount);
+    function setTierDiscount(uint16 _tier, uint16 _discount) external onlyOwner {
+        require(_discount >= 0 && _discount <= 10000, "NFT: Invalid token tier discount.");
+        require(_tier == 1 || _tier == 2 || _tier == 3, "NFT: Tier invalid value.");
+        tierDiscounts[_tier] = _discount;
     }
 
-    function setDiscount(uint256 tokenId, uint256 discount) public 
-    {
-        marketplace.discountNFT(tokenId, discount);
+    function setTokenDiscount(uint16 _tokenId, uint16 _discount) external onlyOwner {
+        require(_discount >= 0 && _discount <= 10000, "NFT: Invalid token discount.");
+        tokenDiscounts[_tokenId] = _discount;
     }
 
-    function getAllTokenSelled() public view returns(uint[] memory)
-    {
-        return nftSelled;
+    function setTokenTier(uint256 _tokenId, uint16 _tier) external onlyOwner {
+        tokenTiers[_tokenId] = _tier;
     }
 
-    function addTokenSelled(uint256 tokenId) external 
-    {
-        nftSelled.push(tokenId);
+    function setPriceTokenBuy(uint256 _tokenId) public {
+        uint256 tier = tokenTiers[_tokenId];
+        uint256 price = tierPrices[tier];
+        console.log("nft sender : ", msg.sender);
+        priceTokenBuy[_tokenId] = price;
     }
 
-    function approveForMarketplace(address from, address to, uint256 tokenId) external 
-    {
-        _approve(to, tokenId, from);
+    function getTokenPrice(uint256 _tokenId) public view returns (uint256) {
+        uint16 tier = tokenTiers[_tokenId];
+        uint256 price = tierPrices[tier];
+        uint16 discount = tierDiscounts[tier];
+        if (tokenDiscounts[_tokenId] > 0) {
+            discount = tokenDiscounts[_tokenId];
+        }
+        return price - price * discount / 10000;
     }
 
-    function _update(address to, uint256 tokenId, address auth)
-    internal 
-    override (ERC721, ERC721Enumerable)
-    returns (address)
-    {
-        return super._update(to, tokenId, auth);
+    function getTokenTier(uint256 _tokenId) public view returns (uint16) {
+        return tokenTiers[_tokenId];
     }
 
-    function _increaseBalance(address account, uint128 value)
-        internal
-        override(ERC721, ERC721Enumerable)
-    {
-        super._increaseBalance(account, value);
+    function getTotalNFT() public view virtual returns (uint256) {
+        return _nextTokenId;
     }
 
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override(ERC721, ERC721Enumerable)
-        returns (bool)
-    {
-        return super.supportsInterface(interfaceId);
+    function getTokenDiscount(uint256 _tokenId) public view returns (uint16) {
+        return tokenDiscounts[_tokenId];
+    }
+
+    function getTierDiscount(uint16 _tier) public view returns (uint256) {
+        return tierDiscounts[_tier];
     }
 }

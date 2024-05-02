@@ -1,0 +1,1383 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.8;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "../token/NovaXERC20.sol";
+import "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
+import "./IMarketplace.sol";
+import "../bill/IBill.sol";
+import "../nft/NovaXNFT.sol";
+import "../oracle/Oracle.sol";
+import "../data/StructData.sol";
+
+contract Marketplace is IMarketplace, Ownable, ERC721Holder {
+    uint256 public maxValueCommission = 500;
+    uint8 public numberMaxStakeValue = 6;
+    uint8 private maxLevelCommission = 5;
+
+    address public nft;
+    address public token;
+    address public currency;
+    address public systemWallet;
+    address public oracleContract;
+    address public stakingContractAddress;
+    address public billContract;
+    address public mintContract;
+    address public saleWallet = 0x4832Ce5F72523632de172684Db63Ea05265Aef91;
+
+    bool private reentrancyGuardForBuying = false;
+    bool private reentrancyGuardForSelling = false;
+
+    // for network stats
+    mapping(address => uint256) private totalActiveMembers;
+    mapping(address => uint256) private referredNftValue;
+    mapping(address => uint256) private nftCommissionEarned;
+    mapping(address => uint256) private nftSaleValue;
+    mapping(address => uint256) private totalCommissionStake;
+
+    mapping(uint8 => uint16) public commissionPercent;
+    mapping(uint8 => uint256) public conditionTotalCommission;
+
+    // Mapping from token ID to token
+    mapping(uint256 => bool) private tokenBuyTokens;
+    mapping(uint16 => uint256) percentUsdtPrice;
+    mapping(address => StructData.ChildListData) private userF1ListData;
+
+    mapping(address => address) private userRef;
+    mapping(uint8 => uint32) private referralCommissions;
+    mapping(address => bool) private lockedReferralData;
+
+    uint256 private saleStrategyOnlyCurrencyStart = 1680393600; // 2023-04-02 00:00:00
+    uint256 private saleStrategyOnlyCurrencyEnd = 1681343999; // 2023-04-12 23:59:59
+    uint256 private salePercent = 150;
+    uint256 private typePayCom = 1; //0: usdt 1: token 2:flex
+
+    bool private allowBuyByCurrency = true; //default allow
+    bool private allowBuyByToken = true; //default disable
+    bool private allowBuyFlex = true; //default disable
+    bool public isEnableBurnToken = false; //default disable
+
+    bool private payTokenBuyByCurrency = true;
+    bool private payTokenBuyByToken = true;
+    bool private payTokenBuyByFlex = true;
+
+    constructor(
+        address _nft,
+        address _token,
+        address _oracle,
+        address _systemWallet,
+        address _currency
+    ) {
+        nft = _nft;
+        token = _token;
+        oracleContract = _oracle;
+        systemWallet = _systemWallet;
+        currency = _currency;
+        initCommissionPercent();
+        initConditionF1Commission();
+        initPayUsdPercents();
+    }
+
+    modifier isAcceptBuyByCurrency() {
+        require(
+            allowBuyByCurrency,
+            "MARKETPLACE: ONLY ACCEPT PAYMENT IN TOKEN"
+        );
+        _;
+    }
+
+    modifier isAcceptBuyByToken() {
+        require(
+            allowBuyByToken,
+            "MARKETPLACE: ONLY ACCEPT PAYMENT IN CURRENCY"
+        );
+        _;
+    }
+
+    modifier isAcceptBuyByFlex() {
+        require(allowBuyFlex, "MARKETPLACE: CANNOT ACCEPT PAYMENT IN FLEX");
+        _;
+    }
+
+    function initCommissionPercent() internal {
+        commissionPercent[1] = 600;
+        commissionPercent[2] = 200;
+        commissionPercent[3] = 100;
+        commissionPercent[4] = 50;
+        commissionPercent[5] = 50;
+    }
+
+    function initConditionF1Commission() internal {
+        conditionTotalCommission[1] = 0;
+        conditionTotalCommission[2] = 500;
+        conditionTotalCommission[3] = 1000;
+        conditionTotalCommission[4] = 2000;
+        conditionTotalCommission[5] = 3000;
+    }
+
+    function initPayUsdPercents() internal {
+        percentUsdtPrice[1] = 500;
+        percentUsdtPrice[2] = 500;
+        percentUsdtPrice[3] = 500;
+        percentUsdtPrice[4] = 500;
+        percentUsdtPrice[5] = 500;
+        percentUsdtPrice[6] = 500;
+        percentUsdtPrice[7] = 500;
+    }
+
+    function setTierPriceUsdPercent(
+        uint16 _tier,
+        uint256 _percent
+    ) external override onlyOwner {
+        require(
+            _percent >= 0 && _percent <= 1000,
+            "MARKETPLACE: INVALID PAYMENT PERCENT"
+        );
+        percentUsdtPrice[_tier] = _percent;
+    }
+
+    function getTierUsdPercent(
+        uint16 _tier
+    ) external view override returns (uint256) {
+        return percentUsdtPrice[_tier];
+    }
+
+    function getCommissionPercent(
+        uint8 _level
+    ) external view override returns (uint16) {
+        return commissionPercent[_level];
+    }
+
+    function setCommissionPercent(
+        uint8 _level,
+        uint16 _percent
+    ) external override onlyOwner {
+        commissionPercent[_level] = _percent;
+    }
+
+    function setNftBuyByToken(
+        uint256 _nftId,
+        bool _isBuyByToken
+    ) external override onlyOwner {
+        tokenBuyTokens[_nftId] = _isBuyByToken;
+    }
+
+    function getConditionTotalCommission(
+        uint8 _level
+    ) external view override returns (uint256) {
+        return conditionTotalCommission[_level];
+    }
+
+    function setConditionTotalCommission(
+        uint8 _level,
+        uint256 _value
+    ) external override onlyOwner {
+        conditionTotalCommission[_level] = _value;
+    }
+
+    function setPayToken(
+        bool _payInCurrency,
+        bool _payInToken,
+        bool _payInFlex
+    ) public override onlyOwner {
+        payTokenBuyByCurrency = _payInCurrency;
+        payTokenBuyByToken = _payInToken;
+        payTokenBuyByFlex = _payInFlex;
+    }
+
+    /**
+     * @dev set sale wallet to receive token
+     */
+    function setSaleWalletAddress(
+        address _saleAddress
+    ) external override onlyOwner {
+        require(
+            _saleAddress != address(0),
+            "MARKETPLACE: INVALID SALE ADDRESS"
+        );
+        saleWallet = _saleAddress;
+    }
+
+    function setIsEnableBurnToken(
+        bool _isEnableBurnToken
+    ) external override onlyOwner {
+        isEnableBurnToken = _isEnableBurnToken;
+    }
+
+    /**
+     * @dev set staking contract address
+     */
+    function setStakingContractAddress(
+        address _stakingAddress
+    ) external override onlyOwner {
+        require(
+            _stakingAddress != address(0),
+            "MARKETPLACE: INVALID STAKING ADDRESS"
+        );
+        stakingContractAddress = _stakingAddress;
+    }
+
+    function setBillContract(
+        address newBillContract
+    ) external override onlyOwner {
+        billContract = newBillContract;
+    }
+
+    function setMintContractAddress(
+        address _mintContract
+    ) external override onlyOwner {
+        require(
+            _mintContract != address(0),
+            "MARKETPLACE: INVALID MINT ADDRESS"
+        );
+        mintContract = _mintContract;
+    }
+
+    function setMaxNumberStakeValue(uint8 _value) external override onlyOwner {
+        require(
+            _value >= 0,
+            "MARKETPLACE: INVALID MAX NUMBER COMMISSION VALUE"
+        );
+        numberMaxStakeValue = _value;
+    }
+
+    function setDefaultMaxCommission(
+        uint256 _value
+    ) external override onlyOwner {
+        require(_value >= 0, "MARKETPLACE: INVALID MAX COMMISSION VALUE");
+        maxValueCommission = _value;
+    }
+
+    /**
+     * @dev set sale StrategyOnlyCurrency time starting
+     */
+    function setSaleStrategyOnlyCurrencyStart(
+        uint256 _newSaleStart
+    ) external override onlyOwner {
+        saleStrategyOnlyCurrencyStart = _newSaleStart;
+    }
+
+    /**
+     * @dev get discount in sale period
+     */
+    function setSaleStrategyOnlyCurrencyEnd(
+        uint256 _newSaleEnd
+    ) external override onlyOwner {
+        require(
+            _newSaleEnd > saleStrategyOnlyCurrencyStart,
+            "MARKETPLACE: TIME ENDING MUST GREATER THAN TIME BEGINNING"
+        );
+        saleStrategyOnlyCurrencyEnd = _newSaleEnd;
+    }
+
+    /**
+     * @dev allow buy NFT by currency
+     */
+    function allowBuyNftByCurrency(
+        bool _activePayByCurrency
+    ) external override onlyOwner {
+        allowBuyByCurrency = _activePayByCurrency;
+    }
+
+    /**
+     * @dev allow buy NFT by token
+     */
+    function allowBuyNftByToken(
+        bool _activePayByToken
+    ) external override onlyOwner {
+        allowBuyByToken = _activePayByToken;
+    }
+
+    /**
+     * @dev allow buy NFT by flex
+     */
+    function allowBuyNftByCurrencyAndToken(
+        bool _activePayByCurrencyAndToken
+    ) public override onlyOwner {
+        allowBuyFlex = _activePayByCurrencyAndToken;
+    }
+
+    /**
+     * @dev set Token buy by token
+     */
+    function setToken(address _address) external override onlyOwner {
+        require(_address != address(0), "MARKETPLACE: INVALID TOKEN ADDRESS");
+        token = _address;
+    }
+
+    /**
+     * @dev set type pay com(token or currency)
+     */
+    function setTypePayCommission(
+        uint256 _typePayCommission
+    ) external override onlyOwner {
+        require(
+            _typePayCommission >= 0 && _typePayCommission < 3,
+            "MARKETPLACE: INVALID TYPE COM"
+        );
+        // false is pay com by token
+        // true is pay com by usdt
+        typePayCom = _typePayCommission;
+    }
+
+    /**
+     * @dev set sale percent
+     */
+    function setSalePercent(uint256 _newSalePercent) public override onlyOwner {
+        require(
+            _newSalePercent >= 0 && _newSalePercent <= 1000,
+            "MARKETPLACE: INVALID SALE PERCENT"
+        );
+        salePercent = _newSalePercent;
+    }
+
+    /**
+     * @dev set oracle address
+     */
+    function setOracleAddress(
+        address _oracleAddress
+    ) external override onlyOwner {
+        require(
+            _oracleAddress != address(0),
+            "MARKETPLACE: INVALID ORACLE ADDRESS"
+        );
+        oracleContract = _oracleAddress;
+    }
+
+    function setNftAddress(address _nftAddress) external override onlyOwner {
+        require(_nftAddress != address(0), "MARKETPLACE: INVALID NFT ADDRESS");
+        nft = _nftAddress;
+    }
+
+    /**
+     * @dev get discount percent if possible
+     */
+    function getCurrentSalePercent() internal view returns (uint) {
+        uint currentSalePercent = 0;
+        if (
+            block.timestamp >= saleStrategyOnlyCurrencyStart &&
+            block.timestamp < saleStrategyOnlyCurrencyEnd
+        ) {
+            currentSalePercent = salePercent;
+        }
+        return currentSalePercent;
+    }
+
+    function getTotalCommission(
+        address _wallet
+    ) public view override returns (uint256) {
+        uint256 currentCommissionEarned = nftCommissionEarned[_wallet];
+        uint256 stakeCommissionUserInUsd = totalCommissionStake[_wallet];
+        return currentCommissionEarned + stakeCommissionUserInUsd;
+    }
+
+    function getActiveMemberForAccount(
+        address _wallet
+    ) external view override returns (uint256) {
+        return totalActiveMembers[_wallet];
+    }
+
+    function getReferredNftValueForAccount(
+        address _wallet
+    ) external view override returns (uint256) {
+        return referredNftValue[_wallet];
+    }
+
+    function getNftCommissionEarnedForAccount(
+        address _wallet
+    ) external view override returns (uint256) {
+        return nftCommissionEarned[_wallet];
+    }
+
+    function updateNetworkData(
+        address _refWallet,
+        uint256 _totalValueUsdWithDecimal,
+        uint16 _commissionBuy
+    ) internal {
+        uint256 currentNftValueInUsdWithDecimal = referredNftValue[_refWallet];
+        referredNftValue[_refWallet] =
+            currentNftValueInUsdWithDecimal +
+            _totalValueUsdWithDecimal;
+        // Update NFT Commission Earned
+        if (_commissionBuy != 0) {
+            uint256 currentCommissionEarned = nftCommissionEarned[_refWallet];
+            uint256 commissionBuy = _commissionBuy;
+            uint256 commissionAmountInUsdWithDecimal = (_totalValueUsdWithDecimal *
+                    commissionBuy) / 10000;
+            uint256 stakeCommissionUserInUsd = totalCommissionStake[_refWallet];
+            uint256 maxCommissionWithDecimal = getMaxCommissionByAddressInUsd(
+                _refWallet
+            );
+            uint256 totalCommission = currentCommissionEarned +
+                commissionAmountInUsdWithDecimal;
+            uint256 totalCommissionWithStake = totalCommission +
+                stakeCommissionUserInUsd;
+            if (_refWallet != systemWallet) {
+                if (totalCommissionWithStake >= maxCommissionWithDecimal) {
+                    totalCommission =
+                        maxCommissionWithDecimal -
+                        stakeCommissionUserInUsd;
+                }
+            }
+            nftCommissionEarned[_refWallet] = totalCommission;
+        }
+    }
+
+    function updateNetworkMintData(
+        address _refWallet,
+        uint256 _totalValueUsdWithDecimal,
+        uint16 _commissionBuy
+    ) public override {
+        require(
+            msg.sender == mintContract,
+            "MARKETPLACE: INVALID CALLER TO UPDATE SALE DATA"
+        );
+        uint256 currentNftValueInUsdWithDecimal = referredNftValue[_refWallet];
+        referredNftValue[_refWallet] =
+            currentNftValueInUsdWithDecimal +
+            _totalValueUsdWithDecimal;
+        // Update NFT Commission Earned
+        if (_commissionBuy != 0) {
+            uint256 currentCommissionEarned = nftCommissionEarned[_refWallet];
+            uint256 commissionBuy = _commissionBuy;
+            uint256 commissionAmountInUsdWithDecimal = (_totalValueUsdWithDecimal *
+                    commissionBuy) / 10000;
+            uint256 stakeCommissionUserInUsd = totalCommissionStake[_refWallet];
+            uint256 maxCommissionWithDecimal = getMaxCommissionByAddressInUsd(
+                _refWallet
+            );
+            uint256 totalCommission = currentCommissionEarned +
+                commissionAmountInUsdWithDecimal;
+            uint256 totalCommissionWithStake = totalCommission +
+                stakeCommissionUserInUsd;
+            if (_refWallet != systemWallet) {
+                if (totalCommissionWithStake >= maxCommissionWithDecimal) {
+                    totalCommission =
+                        maxCommissionWithDecimal -
+                        stakeCommissionUserInUsd;
+                }
+            }
+            nftCommissionEarned[_refWallet] = totalCommission;
+        }
+    }
+
+    function getCommissionRef(
+        address _refWallet,
+        uint256 _totalValueUsdWithDecimal,
+        uint256 _totalCommission,
+        uint16 _commissionBuy // % commission
+    ) public view returns (uint256) {
+        uint256 commissionBuy = _commissionBuy;
+        uint256 commissionAmountInUsdWithDecimal = (_totalValueUsdWithDecimal *
+            commissionBuy) / 10000;
+        uint256 maxCommissionWithDecimal = getMaxCommissionByAddressInUsd(
+            _refWallet
+        );
+        uint256 totalCommission = _totalCommission;
+        uint256 totalCommissionAfterBuy = commissionAmountInUsdWithDecimal +
+            totalCommission;
+        if (_refWallet != systemWallet) {
+            if (totalCommissionAfterBuy >= maxCommissionWithDecimal) {
+                commissionAmountInUsdWithDecimal =
+                    maxCommissionWithDecimal -
+                    totalCommission;
+            }
+        }
+        return commissionAmountInUsdWithDecimal;
+    }
+
+    function updateBuyTokenMapping(
+        uint256[] memory _nftIds,
+        bool _isBuyByToken
+    ) internal {
+        uint index;
+        for (index = 0; index < _nftIds.length; index++) {
+            uint256 nftId = _nftIds[index];
+            tokenBuyTokens[nftId] = _isBuyByToken;
+        }
+    }
+
+    function checkValidRefCodeAdvance(
+        address _user,
+        address _refAddress
+    ) public view override returns (bool) {
+        bool isValid = true;
+        address currentRefUser = _refAddress;
+        address[] memory refTree = new address[](101);
+        refTree[0] = _user;
+        uint i = 1;
+        while (i < 101 && currentRefUser != systemWallet) {
+            for (uint j = 0; j < refTree.length; j++) {
+                if (currentRefUser == refTree[j]) {
+                    isValid = false;
+                    break;
+                }
+            }
+            refTree[i] = currentRefUser;
+            currentRefUser = getReferralAccountForAccount(currentRefUser);
+            ++i;
+        }
+        return isValid;
+    }
+
+    /**
+     * @dev buyByCurrency function
+     * @param _nftIds list NFT ID want to buy
+     * @param _refAddress ref of address for account
+     */
+    function buyByCurrency(
+        uint256[] memory _nftIds,
+        address _refAddress
+    ) public override isAcceptBuyByCurrency {
+        require(
+            _refAddress != msg.sender,
+            "MARKETPLACE: CANNOT REF TO YOURSELF"
+        );
+        require(_nftIds.length > 0, "MARKETPLACE: INVALID LIST NFT ID");
+        require(
+            _nftIds.length <= 100,
+            "MARKETPLACE: TOO MANY NFT IN SINGLE BUY"
+        );
+        // Prevent re-entrancy
+        require(!reentrancyGuardForBuying, "MARKETPLACE: REENTRANCY DETECTED");
+        // Prevent cheat
+        require(
+            checkValidRefCodeAdvance(msg.sender, _refAddress),
+            "MARKETPLACE: CHEAT REF DETECTED"
+        );
+        reentrancyGuardForBuying = true;
+        // Start processing
+        uint index;
+        uint256 totalValueUsdWithDecimal = getTotalValue(_nftIds);
+        //check sale and update total value
+        uint currentSale = getCurrentSalePercent();
+        uint256 saleValueUsdWithDecimal = 0;
+        if (currentSale > 0) {
+            saleValueUsdWithDecimal =
+                (currentSale * totalValueUsdWithDecimal) /
+                1000;
+        }
+        uint256 payValueTokenWithDecimal = totalValueUsdWithDecimal -
+            saleValueUsdWithDecimal;
+        pay(currency, payValueTokenWithDecimal);
+        // Get ref infor
+        address payable refAddress = payable(_refAddress);
+        require(
+            refAddress != address(0),
+            "MARKETPLACE: CALLER MUST HAVE A REFERRAL ACCOUNT"
+        );
+        // Transfer nft from marketplace to buyer
+        for (index = 0; index < _nftIds.length; index++) {
+            try
+                NovaXNFT(nft).safeTransferFrom(
+                    address(this),
+                    msg.sender,
+                    _nftIds[index]
+                )
+            {
+                emit Buy(address(this), msg.sender, _nftIds[index], refAddress);
+            } catch (bytes memory _error) {
+                reentrancyGuardForBuying = false;
+                emit ErrorLog(_error);
+                revert("MARKETPLACE: BUY FAILED");
+            }
+            //lock transfer nft 1 year
+            NovaXNFT(nft).setLockTimeTransfer(_nftIds[index], block.timestamp);
+            IBill(billContract).updateBuy(msg.sender, _nftIds[index]);
+        }
+        // Update network data
+        updateDataBuy(
+            msg.sender,
+            _refAddress,
+            totalValueUsdWithDecimal,
+            payTokenBuyByCurrency
+        );
+        updateBuyTokenMapping(_nftIds, payTokenBuyByCurrency);
+        // Rollback for next action
+        reentrancyGuardForBuying = false;
+    }
+
+    function pay(address payToken, uint256 payValueTokenWithDecimal) internal {
+        require(
+            NovaXERC20(payToken).balanceOf(msg.sender) >=
+                payValueTokenWithDecimal,
+            "MARKETPLACE: Not enough balance to buy NFTs"
+        );
+        require(
+            NovaXERC20(payToken).allowance(msg.sender, address(this)) >=
+                payValueTokenWithDecimal,
+            "MARKETPLACE: Must approve first"
+        );
+        require(
+            NovaXERC20(payToken).transferFrom(
+                msg.sender,
+                saleWallet,
+                payValueTokenWithDecimal
+            ),
+            "MARKETPLACE: Transfer to MARKETPLACE failed"
+        );
+    }
+
+    function getTotalValue(
+        uint256[] memory _nftIds
+    ) internal view returns (uint256) {
+        uint256 totalValueUsd;
+        for (uint index = 0; index < _nftIds.length; index++) {
+            uint256 priceNftUsd = NovaXNFT(nft).getNftPriceUsd(_nftIds[index]);
+            require(priceNftUsd > 0, "MARKETPLACE: WRONG NFT ID TO BUY");
+            require(
+                NovaXNFT(nft).ownerOf(_nftIds[index]) == address(this),
+                "MARKETPLACE: NOT OWNER THIS NFT ID"
+            );
+            totalValueUsd += priceNftUsd;
+        }
+        uint256 totalValueUsdWithDecimal = totalValueUsd *
+            (10 ** NovaXERC20(currency).decimals());
+        return totalValueUsdWithDecimal;
+    }
+
+    function getTotalValueFlex(
+        uint256[] memory _nftIds
+    ) internal view returns (uint256, uint256, uint256) {
+        uint256 totalValueUsd;
+        uint256 valueUsd;
+        uint256 valueUsdToken;
+        for (uint index = 0; index < _nftIds.length; index++) {
+            uint256 priceNftUsd = NovaXNFT(nft).getNftPriceUsd(_nftIds[index]);
+            require(priceNftUsd > 0, "MARKETPLACE: WRONG NFT ID TO BUY");
+            require(
+                NovaXNFT(nft).ownerOf(_nftIds[index]) == address(this),
+                "MARKETPLACE: NOT OWNER THIS NFT ID"
+            );
+            uint16 _tierNft = NovaXNFT(nft).getNftTier(_nftIds[index]);
+            uint256 percentUsd = percentUsdtPrice[_tierNft];
+            require(percentUsd > 0, "MARKETPLACE: WRONG NFT ID TO BUY");
+            uint256 percentToken = 1000 - percentUsd;
+            valueUsd +=
+                (priceNftUsd *
+                    (10 ** ERC20(currency).decimals()) *
+                    percentUsd) /
+                1000;
+            valueUsdToken +=
+                (priceNftUsd *
+                    (10 ** ERC20(currency).decimals()) *
+                    percentToken) /
+                1000;
+            totalValueUsd += priceNftUsd;
+        }
+        return (valueUsd, valueUsdToken, totalValueUsd);
+    }
+
+    /**
+     * @dev buyByToken function
+     * @param _nftIds list NFT ID want to buy
+     * @param _refAddress ref of address for account
+     */
+    function buyByToken(
+        uint256[] memory _nftIds,
+        address _refAddress
+    ) public override isAcceptBuyByToken {
+        require(
+            _refAddress != msg.sender,
+            "MARKETPLACE: CANNOT REF TO YOURSELF"
+        );
+        require(_nftIds.length > 0, "MARKETPLACE: INVALID LIST NFT ID");
+        require(
+            _nftIds.length <= 100,
+            "MARKETPLACE: TOO MANY NFT IN SINGLE BUY"
+        );
+        // Prevent re-entrancy
+        require(!reentrancyGuardForBuying, "MARKETPLACE: REENTRANCY DETECTED");
+        // Prevent cheat
+        require(
+            checkValidRefCodeAdvance(msg.sender, _refAddress),
+            "MARKETPLACE: CHEAT REF DETECTED"
+        );
+        reentrancyGuardForBuying = true;
+        // Start processing
+        uint index;
+        uint256 totalValueUsdWithDecimal = getTotalValue(_nftIds);
+        uint256 totalValueInTokenWithDecimal = Oracle(oracleContract)
+            .convertUsdBalanceDecimalToTokenDecimal(totalValueUsdWithDecimal);
+        require(
+            totalValueInTokenWithDecimal > 0,
+            "MARKETPLACE: ORACLE NOT WORKING."
+        );
+        //check sale and update total value
+        uint currentSale = getCurrentSalePercent();
+        uint256 saleValueInTokenWithDecimal = 0;
+        if (currentSale > 0) {
+            saleValueInTokenWithDecimal =
+                (currentSale * totalValueInTokenWithDecimal) /
+                1000;
+        }
+        uint256 payValueTokenWithDecimal = totalValueInTokenWithDecimal -
+            saleValueInTokenWithDecimal;
+        pay(token, payValueTokenWithDecimal);
+        // Transfer nft from marketplace to buyer
+        // Get ref infor
+        address payable refAddress = payable(_refAddress);
+        require(
+            refAddress != address(0),
+            "MARKETPLACE: CALLER MUST HAVE A REFERRAL ACCOUNT"
+        );
+        // Update Referred NFT Value
+        // transfer
+        for (index = 0; index < _nftIds.length; index++) {
+            try
+                NovaXNFT(nft).safeTransferFrom(
+                    address(this),
+                    msg.sender,
+                    _nftIds[index]
+                )
+            {
+                emit Buy(address(this), msg.sender, _nftIds[index], refAddress);
+            } catch (bytes memory _error) {
+                reentrancyGuardForBuying = false;
+                emit ErrorLog(_error);
+                revert("MARKETPLACE: BUY FAILED");
+            }
+            //lock transfer nft 1 year
+            NovaXNFT(nft).setLockTimeTransfer(_nftIds[index], block.timestamp);
+            IBill(billContract).updateBuy(msg.sender, _nftIds[index]);
+        }
+        updateDataBuy(
+            msg.sender,
+            _refAddress,
+            totalValueUsdWithDecimal,
+            payTokenBuyByToken
+        );
+        updateBuyTokenMapping(_nftIds, payTokenBuyByToken);
+        // Rollback for next action
+        reentrancyGuardForBuying = false;
+    }
+
+    function buyByTokenAndCurrency(
+        uint256[] memory _nftIds,
+        address _refAddress
+    ) public override isAcceptBuyByFlex {
+        require(
+            _refAddress != msg.sender,
+            "MARKETPLACE: CANNOT REF TO YOURSELF"
+        );
+        require(_nftIds.length > 0, "MARKETPLACE: INVALID LIST NFT ID");
+        require(
+            _nftIds.length <= 100,
+            "MARKETPLACE: TOO MANY NFT IN SINGLE BUY"
+        );
+        // Prevent re-entrancy
+        require(!reentrancyGuardForBuying, "MARKETPLACE: REENTRANCY DETECTED");
+        // Prevent cheat
+        require(
+            checkValidRefCodeAdvance(msg.sender, _refAddress),
+            "MARKETPLACE: CHEAT REF DETECTED"
+        );
+        reentrancyGuardForBuying = true;
+        // Start processing
+        (
+            uint256 valueUsd,
+            uint256 valueUsdToken,
+            uint256 totalValueUsd
+        ) = getTotalValueFlex(_nftIds);
+        uint256 totalValueUsdWithDecimal = totalValueUsd *
+            (10 ** ERC20(currency).decimals());
+        uint256 valueToken = Oracle(oracleContract)
+            .convertUsdBalanceDecimalToTokenDecimal(valueUsdToken);
+        uint256[] memory nftIds = _nftIds;
+        require(valueToken > 0, "MARKETPLACE: ORACLE NOT WORKING.");
+        //check sale and update total value
+        uint currentSale = getCurrentSalePercent();
+        uint256 saleValueInTokenWithDecimal = 0;
+        uint256 saleValueInUsdWithDecimal = 0;
+        if (currentSale > 0) {
+            saleValueInTokenWithDecimal = (currentSale * valueToken) / 1000;
+            saleValueInUsdWithDecimal = (currentSale * valueUsd) / 1000;
+        }
+        uint256 payValueUsdWithDecimal = valueUsd - saleValueInUsdWithDecimal;
+        uint256 payValueTokenWithDecimal = valueToken -
+            saleValueInTokenWithDecimal;
+        pay(currency, payValueUsdWithDecimal);
+        pay(token, payValueTokenWithDecimal);
+        // Get ref infor
+        address payable refAddress = payable(_refAddress);
+        require(
+            refAddress != address(0),
+            "MARKETPLACE: CALLER MUST HAVE A REFERRAL ACCOUNT"
+        );
+        // transfer
+        uint index;
+        for (index = 0; index < _nftIds.length; index++) {
+            try
+                NovaXNFT(nft).safeTransferFrom(
+                    address(this),
+                    msg.sender,
+                    nftIds[index]
+                )
+            {
+                emit Buy(address(this), msg.sender, nftIds[index], refAddress);
+            } catch (bytes memory _error) {
+                reentrancyGuardForBuying = false;
+                emit ErrorLog(_error);
+                revert("MARKETPLACE: BUY FAILED");
+            }
+            //lock transfer nft 1 year
+            NovaXNFT(nft).setLockTimeTransfer(nftIds[index], block.timestamp);
+            IBill(billContract).updateBuy(msg.sender, nftIds[index]);
+        }
+        // Transfer nft from marketplace to buyer
+        updateDataBuy(
+            msg.sender,
+            _refAddress,
+            totalValueUsdWithDecimal,
+            payTokenBuyByFlex
+        );
+        updateBuyTokenMapping(nftIds, payTokenBuyByFlex);
+        // Rollback for next action
+        reentrancyGuardForBuying = false;
+    }
+
+    function updateCommissionStakeValueData(
+        address _user,
+        uint256 _valueInUsdWithDecimal
+    ) public override {
+        require(
+            msg.sender == stakingContractAddress,
+            "MARKETPLACE: INVALID CALLER TO UPDATE STAKE DATA"
+        );
+        uint256 currentCommissionStakeValue = totalCommissionStake[_user];
+        totalCommissionStake[_user] =
+            currentCommissionStakeValue +
+            _valueInUsdWithDecimal;
+    }
+
+    /**
+     * @dev update referral data function
+     * @param _user user wallet address
+     * @param _refAddress referral address of ref account
+     */
+    function updateReferralData(
+        address _user,
+        address _refAddress
+    ) public override {
+        address refAddress = _refAddress;
+        address refOfRefUser = getReferralAccountForAccountExternal(refAddress);
+        require(
+            (stakingContractAddress != address(0) &&
+                msg.sender == stakingContractAddress) ||
+                (mintContract != address(0) && msg.sender == mintContract) ||
+                msg.sender == _user,
+            "MARKETPLACE: CONFLICT REF CODE"
+        );
+        require(refOfRefUser != _user, "MARKETPLACE: CONFLICT REF CODE");
+        require(_refAddress != _user, "MARKETPLACE: CANNOT REF TO YOURSELF");
+        require(
+            _refAddress != msg.sender,
+            "MARKETPLACE: CANNOT REF TO YOURSELF"
+        );
+        require(
+            checkValidRefCodeAdvance(msg.sender, _refAddress),
+            "MARKETPLACE: CHEAT REF DETECTED"
+        );
+        if (possibleChangeReferralData(_user)) {
+            userRef[_user] = refAddress;
+            lockedReferralDataForAccount(_user);
+            // Update Active Members
+            uint256 currentMember = totalActiveMembers[refAddress];
+            totalActiveMembers[refAddress] = currentMember + 1;
+            updateF1ListForRefAccount(refAddress, _user);
+        }
+    }
+
+    /**
+     * @dev get NFT sale value
+     */
+    function getNftSaleValueForAccountInUsdDecimal(
+        address _wallet
+    ) public view override returns (uint256) {
+        return nftSaleValue[_wallet];
+    }
+
+    /**
+     * @dev getTotalCommissionStakeByAddressInUsd
+     */
+    function getTotalCommissionStakeByAddressInUsd(
+        address _wallet
+    ) public view override returns (uint256) {
+        return totalCommissionStake[_wallet];
+    }
+
+    /**
+     * @dev getMaxCommissionByAddressInUsd
+     */
+    function getMaxCommissionByAddressInUsd(
+        address _wallet
+    ) public view override returns (uint256) {
+        uint256 nftSaleUser = nftSaleValue[_wallet];
+        uint256 maxOutUser = maxValueCommission *
+            (10 ** NovaXERC20(currency).decimals());
+        uint256 totalBillValue = IBill(billContract).getTotalBillValue(_wallet);
+        if (nftSaleUser > 0) {
+            uint256 maxOut = numberMaxStakeValue * nftSaleUser;
+            uint256 maxOutNoDecimal = maxOut /
+                (10 ** NovaXERC20(currency).decimals());
+            if (maxOutNoDecimal < maxValueCommission) {
+                return maxOutUser + totalBillValue;
+            } else {
+                return maxOut + totalBillValue;
+            }
+        } else {
+            return maxOutUser + totalBillValue;
+        }
+    }
+
+    /**
+     * @dev update refList for refAccount
+     */
+    function updateF1ListForRefAccount(
+        address _refAccount,
+        address _newChild
+    ) internal {
+        userF1ListData[_refAccount].childList.push(_newChild);
+        userF1ListData[_refAccount].memberCounter += 1;
+    }
+
+    /**
+     * @dev get childlist of an address
+     */
+    function getF1ListForAccount(
+        address _wallet
+    ) public view override returns (address[] memory) {
+        return userF1ListData[_wallet].childList;
+    }
+
+    /**
+     * @dev get Team NFT sale value
+     */
+    function getTeamNftSaleValueForAccountInUsdDecimal(
+        address _wallet
+    ) public view override returns (uint256) {
+        uint256 teamNftValue = getChildrenNftSaleValueInUsdDecimal(_wallet);
+        return teamNftValue;
+    }
+
+    function getChildrenNftSaleValueInUsdDecimal(
+        address _wallet
+    ) internal view returns (uint256) {
+        uint256 nftValue = 0;
+        uint256 f1Count = userF1ListData[_wallet].childList.length;
+        for (uint256 i = 0; i < f1Count; i++) {
+            address f1 = userF1ListData[_wallet].childList[i];
+            nftValue += nftSaleValue[f1];
+            nftValue += getChildrenNftSaleValueInUsdDecimal(f1);
+        }
+
+        return nftValue;
+    }
+
+    /**
+     * @dev the function return refferal address for specified address
+     */
+    function getReferralAccountForAccount(
+        address _user
+    ) public view override returns (address) {
+        address refWallet = address(0);
+        refWallet = userRef[_user];
+        if (refWallet == address(0)) {
+            refWallet = systemWallet;
+        }
+        return refWallet;
+    }
+
+    /**
+     * @dev the function return refferal address for specified address (without system)
+     */
+    function getReferralAccountForAccountExternal(
+        address _user
+    ) public view override returns (address) {
+        return userRef[_user];
+    }
+
+    function setMaxLevel(uint8 _maxLevel) external override onlyOwner {
+        maxLevelCommission = _maxLevel;
+    }
+
+    /**
+     * @dev check possible to change referral data for a user
+     * @param _user user wallet address
+     */
+    function possibleChangeReferralData(
+        address _user
+    ) public view override returns (bool) {
+        return !lockedReferralData[_user];
+    }
+
+    /**
+     * @dev only update the referral data 1 time. After set cannot change the data again.
+     */
+    function lockedReferralDataForAccount(address _user) public override {
+        require(
+            lockedReferralData[_user] == false,
+            "MARKETPLACE: USER'S REFERRAL INFORMATION HAS ALREADY BEEN LOCKED"
+        );
+        lockedReferralData[_user] = true;
+    }
+
+    /**
+     * @dev the function pay commission(default 3%) to referral account
+     */
+    function payReferralCommissions(
+        address _buyer,
+        address payable _receiver,
+        uint256 commissionAmountInUsdDecimal,
+        bool _isBuyByToken
+    ) internal {
+        bool _payComByUsd = true;
+        if (typePayCom == 0) {
+            _payComByUsd = true;
+        } else if (typePayCom == 1) {
+            _payComByUsd = false;
+        } else {
+            _payComByUsd = !_isBuyByToken;
+        }
+        if (commissionAmountInUsdDecimal > 0) {
+            if (_payComByUsd) {
+                //true is pay com by usdt(currency)
+                require(
+                    NovaXERC20(currency).balanceOf(address(this)) >=
+                        commissionAmountInUsdDecimal,
+                    "MARKETPLACE: CURRENCY BALANCE NOT ENOUGH"
+                );
+                require(
+                    NovaXERC20(currency).transfer(
+                        _receiver,
+                        commissionAmountInUsdDecimal
+                    ),
+                    "MARKETPLACE: UNABLE TO TRANSFER COMMISSION PAYMENT TO RECIPIENT"
+                );
+                emit PayCommission(
+                    _buyer,
+                    _receiver,
+                    commissionAmountInUsdDecimal
+                );
+            } else {
+                uint256 commissionAmountInTokenDecimal = Oracle(oracleContract)
+                    .convertUsdBalanceDecimalToTokenDecimal(
+                        commissionAmountInUsdDecimal
+                    );
+                require(
+                    NovaXERC20(token).balanceOf(address(this)) >=
+                        commissionAmountInTokenDecimal,
+                    "MARKETPLACE: TOKEN BALANCE NOT ENOUGH"
+                );
+                require(
+                    NovaXERC20(token).transfer(
+                        _receiver,
+                        commissionAmountInTokenDecimal
+                    ),
+                    "MARKETPLACE: UNABLE TO TRANSFER COMMISSION PAYMENT TO RECIPIENT"
+                );
+                emit PayCommission(
+                    _buyer,
+                    _receiver,
+                    commissionAmountInTokenDecimal
+                );
+            }
+        }
+    }
+
+    /**
+     * @dev the function to update system wallet. Only owner can do this action
+     */
+    function setSystemWallet(
+        address _newSystemWallet
+    ) external override onlyOwner {
+        require(
+            _newSystemWallet != address(0) && _newSystemWallet != systemWallet,
+            "MARKETPLACE: INVALID SYSTEM WALLET"
+        );
+        systemWallet = _newSystemWallet;
+    }
+
+    /**
+     * @dev get is buy by token
+     */
+    function isBuyByToken(uint256 _nftId) public view override returns (bool) {
+        return tokenBuyTokens[_nftId];
+    }
+
+    /**
+     * @dev function to pay commissions in 6 level
+     * @param _firstRef direct referral account wallet address
+     * @param _totalAmountUsdWithDecimal total amount stake in usd with decimal for this
+     */
+    function payCommissionMultiLevels(
+        address _buyer,
+        address payable _firstRef,
+        uint256 _totalAmountUsdWithDecimal,
+        bool _payByToken
+    ) internal returns (bool) {
+        address payable currentRef = _firstRef;
+        uint8 idx = 1;
+        while (currentRef != address(0) && idx <= maxLevelCommission) {
+            // Check if ref account is eligible to staked amount enough for commission
+            uint16 commissionPercentRef = getCommissionPercentForAddress(
+                currentRef,
+                idx
+            );
+            uint256 totalCommission = getTotalCommission(currentRef);
+            updateNetworkData(
+                currentRef,
+                _totalAmountUsdWithDecimal,
+                commissionPercentRef
+            );
+            if (commissionPercentRef != 0) {
+                uint256 commissionByUsd = getCommissionRef(
+                    currentRef,
+                    _totalAmountUsdWithDecimal,
+                    totalCommission,
+                    commissionPercentRef
+                );
+                // Transfer referral commissions & update data
+                payReferralCommissions(
+                    _buyer,
+                    currentRef,
+                    commissionByUsd,
+                    _payByToken
+                );
+            }
+            if (currentRef == systemWallet) {
+                currentRef = payable(address(0));
+            } else {
+                address currentParent = userRef[currentRef];
+                currentRef = payable(currentParent);
+            }
+            idx = idx + 1;
+        }
+        return true;
+    }
+
+    function getCommissionPercentForAddress(
+        address _wallet,
+        uint8 _level
+    ) internal view returns (uint16) {
+        uint256 condition = conditionTotalCommission[_level];
+        uint256 conditionUsd = condition *
+            (10 ** NovaXERC20(currency).decimals());
+        uint16 percent = commissionPercent[_level];
+        if (conditionUsd == 0) {
+            return percent;
+        } else {
+            uint256 totalSaleUser = nftSaleValue[_wallet];
+            if (totalSaleUser >= conditionUsd) {
+                return percent;
+            } else {
+                return 0;
+            }
+        }
+    }
+
+    /**
+     * @dev set currency address only for owner
+     */
+    function setCurrencyAddress(address _currency) public override onlyOwner {
+        require(
+            _currency != address(0),
+            "MARKETPLACE: CURRENCY MUST NOT BE ADDRESSED TO ZERO"
+        );
+        require(
+            _currency != currency,
+            "MARKETPLACE: MUST BE DIFFERENT CURRENCY ADDRESS"
+        );
+        currency = _currency;
+    }
+
+    /**
+     * @dev withdraw some token balance from contract to owner account
+     */
+    function withdrawTokenEmergency(
+        address _token,
+        uint256 _amount
+    ) public override onlyOwner {
+        require(_amount > 0, "MARKETPLACE: INVALID AMOUNT");
+        require(
+            NovaXERC20(_token).balanceOf(address(this)) >= _amount,
+            "MARKETPLACE: TOKEN BALANCE NOT ENOUGH"
+        );
+        require(
+            NovaXERC20(_token).transfer(msg.sender, _amount),
+            "MARKETPLACE: CANNOT WITHDRAW TOKEN"
+        );
+    }
+
+    /**
+     * @dev withdraw some currency balance from contract to owner account
+     */
+    function withdrawTokenEmergencyFrom(
+        address _from,
+        address _to,
+        address _token,
+        uint256 _amount
+    ) public override onlyOwner {
+        require(_amount > 0, "MARKETPLACE: INVALID AMOUNT");
+        require(
+            NovaXERC20(_token).balanceOf(_from) >= _amount,
+            "MARKETPLACE: CURRENCY BALANCE NOT ENOUGH"
+        );
+        require(
+            NovaXERC20(_token).transferFrom(_from, _to, _amount),
+            "MARKETPLACE: CANNOT WITHDRAW CURRENCY"
+        );
+    }
+
+    /**
+     * @dev Recover lost bnb and send it to the contract owner
+     */
+    function recoverLostBNB() public onlyOwner {
+        address payable recipient = payable(msg.sender);
+        recipient.transfer(address(this).balance);
+    }
+
+    /**
+     * @dev transfer a NFT from this contract to an account, only owner
+     */
+    function transferNftEmergency(
+        address _receiver,
+        uint256 _nftId,
+        bool _isEquip,
+        bool _isToken,
+        bool _isPay
+    ) public override onlyOwner {
+        if (_isPay) {
+            uint256[] memory _nftIds = new uint256[](1);
+            _nftIds[0] = _nftId;
+            uint256 totalValueUsdWithDecimal = getTotalValue(_nftIds);
+            address _refAddress = getReferralAccountForAccount(_receiver);
+            updateDataBuy(
+                _receiver,
+                _refAddress,
+                totalValueUsdWithDecimal,
+                _isToken
+            );
+        }
+        require(
+            NovaXNFT(nft).ownerOf(_nftId) == address(this),
+            "MARKETPLACE: NOT OWNER OF THIS NFT"
+        );
+        try
+            NovaXNFT(nft).safeTransferFrom(address(this), _receiver, _nftId, "")
+        {} catch (bytes memory _error) {
+            emit ErrorLog(_error);
+            revert("MARKETPLACE: NFT TRANSFER FAILED");
+        }
+
+        if (_isEquip) {
+            NovaXNFT(nft).setLockTimeTransfer(_nftId, block.timestamp);
+            IBill(billContract).updateBuy(_receiver, _nftId);
+        }
+    }
+
+    function updateSaleValue(
+        address _receiver,
+        uint256 totalValueUsdWithDecimal
+    ) public override {
+        require(
+            msg.sender == mintContract,
+            "MARKETPLACE: INVALID CALLER TO UPDATE SALE DATA"
+        );
+        uint256 currentNftSaleValue = nftSaleValue[_receiver];
+        nftSaleValue[_receiver] =
+            currentNftSaleValue +
+            totalValueUsdWithDecimal;
+    }
+
+    function updateDataBuy(
+        address _receiver,
+        address _refAddress,
+        uint256 totalValueUsdWithDecimal,
+        bool _isToken
+    ) internal {
+        uint256 currentNftSaleValue = nftSaleValue[_receiver];
+        nftSaleValue[_receiver] =
+            currentNftSaleValue +
+            totalValueUsdWithDecimal;
+        address payable refAddress = payable(_refAddress);
+        payCommissionMultiLevels(
+            _receiver,
+            refAddress,
+            totalValueUsdWithDecimal,
+            _isToken
+        );
+        // Fixed the ref data of buyer
+        if (possibleChangeReferralData(_receiver)) {
+            updateReferralData(_receiver, _refAddress);
+        }
+    }
+
+    /**
+     * @dev transfer a list of NFT from this contract to a list of account, only owner
+     */
+    function transferMultiNftsEmergency(
+        address[] memory _receivers,
+        uint256[] memory _nftIds,
+        bool _isEquip,
+        bool _isToken,
+        bool _isPay
+    ) public override onlyOwner {
+        require(
+            _receivers.length == _nftIds.length,
+            "MARKETPLACE: MUST BE SAME SIZE"
+        );
+        for (uint index = 0; index < _nftIds.length; index++) {
+            transferNftEmergency(
+                _receivers[index],
+                _nftIds[index],
+                _isEquip,
+                _isToken,
+                _isPay
+            );
+        }
+    }
+
+    function updateWalletInformation(
+        address _wallet,
+        uint256 _referredNftValue,
+        uint256 _nftCommissionEarned,
+        uint256 _totalActiveMembers,
+        uint256 _nftSaleValue,
+        uint256 _totalCommissionStake
+    ) external onlyOwner {
+        referredNftValue[_wallet] = _referredNftValue;
+        nftCommissionEarned[_wallet] = _nftCommissionEarned;
+        nftSaleValue[_wallet] = _nftSaleValue;
+        totalActiveMembers[_wallet] = _totalActiveMembers;
+        totalCommissionStake[_wallet] = _totalCommissionStake;
+    }
+
+    function updateF1ListForRefAccount(
+        address _wallet,
+        address[] memory _f1Lists
+    ) external onlyOwner {
+        userF1ListData[_wallet].childList = _f1Lists;
+        userF1ListData[_wallet].memberCounter = _f1Lists.length;
+        uint index;
+        for (index = 0; index < _f1Lists.length; index++) {
+            userRef[_f1Lists[index]] = _wallet;
+            lockedReferralData[_f1Lists[index]] = true;
+        }
+    }
+
+    function updateLockedReferralDataByAdmin(
+        address[] calldata _wallets,
+        bool[] calldata _lockedReferralDatas
+    ) external onlyOwner {
+        require(
+            _wallets.length == _lockedReferralDatas.length,
+            "MARKETPLACE: _wallets and _lockedReferralDatas must be same size"
+        );
+        for (uint32 index = 0; index < _wallets.length; index++) {
+            lockedReferralData[_wallets[index]] = _lockedReferralDatas[index];
+        }
+    }
+
+    receive() external payable {}
+}
