@@ -13,9 +13,12 @@
     "nft": "hardhat run scripts/deploy-nft.ts",
     "token": "hardhat run scripts/deploy-token.ts",
     "market": "hardhat run scripts/deploy-market.ts",
-    "deploy": "yarn nft && yarn token && yarn market",
+    "stake": "hardhat run scripts/deploy-stake.ts",
+    "deploy": "yarn nft && yarn token && yarn market && yarn stake",
     "verify": "hardhat verify --network bscTestnet 0x6f14F89AB6745F7088Bc6F34864CeDC12A743603 0x737DcAc2c2b401145698DeBdA998867AB9BB6c29 0xa5c18EaBd9DCb96A20b004360793F4415e41d63d 0x0273AbB81E0dc3BbD4e69Ed89C4Fc6ce488986E3",
     "test": "hardhat run scripts/test-market.ts",
+    "test-stake": "hardhat run scripts/test-stake.ts",
+    "test-draft": "hardhat run scripts/test-draft.ts",
     "draft": "hardhat run --network marketplace scripts/draft.ts"
   },
   "devDependencies": {

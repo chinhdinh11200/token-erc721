@@ -7,6 +7,7 @@ import "hardhat/console.sol";
 
 contract BekiNFT is ERC721, Ownable {
     uint256 private _nextTokenId;
+    address private marketplace;
     mapping(uint256 => string) private tokenUris;
     mapping(uint16 => uint256) private tierPrices;
     mapping(uint16 => uint16) private tierDiscounts;
@@ -42,14 +43,34 @@ contract BekiNFT is ERC721, Ownable {
         tierPrices[_tier] = _price;
     }
 
-    function setTierDiscount(uint16 _tier, uint16 _discount) external onlyOwner {
-        require(_discount >= 0 && _discount <= 10000, "NFT: Invalid token tier discount.");
-        require(_tier == 1 || _tier == 2 || _tier == 3, "NFT: Tier invalid value.");
+    function setMarketplace(address _marketplace) external onlyOwner {
+        require(_marketplace != address(0), "NFT: Address can not be empty!");
+        marketplace = _marketplace;
+    }
+
+    function setTierDiscount(
+        uint16 _tier,
+        uint16 _discount
+    ) external onlyOwner {
+        require(
+            _discount >= 0 && _discount <= 10000,
+            "NFT: Invalid token tier discount."
+        );
+        require(
+            _tier == 1 || _tier == 2 || _tier == 3,
+            "NFT: Tier invalid value."
+        );
         tierDiscounts[_tier] = _discount;
     }
 
-    function setTokenDiscount(uint16 _tokenId, uint16 _discount) external onlyOwner {
-        require(_discount >= 0 && _discount <= 10000, "NFT: Invalid token discount.");
+    function setTokenDiscount(
+        uint16 _tokenId,
+        uint16 _discount
+    ) external onlyOwner {
+        require(
+            _discount >= 0 && _discount <= 10000,
+            "NFT: Invalid token discount."
+        );
         tokenDiscounts[_tokenId] = _discount;
     }
 
@@ -58,9 +79,12 @@ contract BekiNFT is ERC721, Ownable {
     }
 
     function setPriceTokenBuy(uint256 _tokenId) public {
-        uint256 tier = tokenTiers[_tokenId];
+        require(
+            msg.sender == marketplace,
+            "NFT: Only marketplace can be access."
+        );
+        uint16 tier = tokenTiers[_tokenId];
         uint256 price = tierPrices[tier];
-        console.log("nft sender : ", msg.sender);
         priceTokenBuy[_tokenId] = price;
     }
 
@@ -71,7 +95,7 @@ contract BekiNFT is ERC721, Ownable {
         if (tokenDiscounts[_tokenId] > 0) {
             discount = tokenDiscounts[_tokenId];
         }
-        return price - price * discount / 10000;
+        return price - (price * discount) / 10000;
     }
 
     function getTokenTier(uint256 _tokenId) public view returns (uint16) {
@@ -88,5 +112,9 @@ contract BekiNFT is ERC721, Ownable {
 
     function getTierDiscount(uint16 _tier) public view returns (uint256) {
         return tierDiscounts[_tier];
+    }
+
+    function getPriceTokenBuy(uint256 _tokenId) public view returns (uint256) {
+        return priceTokenBuy[_tokenId];
     }
 }
