@@ -15,7 +15,6 @@ const config: HardhatUserConfig = {
     },
     bscTestnet: {
       url: "https://data-seed-prebsc-1-s2.bnbchain.org:8545",
-      // url: "https://endpoints.omniatech.io/v1/bsc/testnet/public",
       chainId: 97,
       gasPrice: 10000000000,
       accounts: [`0x${PRIVATE_KEY}`, `0x${PRIVATE_KEY_BUYER}`],

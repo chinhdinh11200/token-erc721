@@ -58,10 +58,6 @@ contract Marketplace is ERC721Holder, Ownable {
         bekiTokenAddress = _bekiTokenAddress;
     }
 
-    function setPriceTokenBuy(uint256 _tokenId) public onlyOwner {
-        IBekiNFT(bekiNFTAddress).setPriceTokenBuy(_tokenId);
-    }
-
     function buyBekiNFT(uint256 _tokenId) public {
         address owner = IBekiNFT(bekiNFTAddress).ownerOf(_tokenId);
         require(
@@ -73,6 +69,7 @@ contract Marketplace is ERC721Holder, Ownable {
         ) * decimals;
         payToken(priceNFTWithDecimal, owner);
         IBekiNFT(bekiNFTAddress).safeTransferFrom(owner, msg.sender, _tokenId);
+        IBekiNFT(bekiNFTAddress).setPriceTokenBuy(_tokenId);
         uint256 currentBuy = nftBuyValue[msg.sender];
         nftBuyValue[msg.sender] = currentBuy + priceNFTWithDecimal;
     }
