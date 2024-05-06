@@ -6,11 +6,6 @@ async function main() {
   const contract =  await contractFactory.deploy();
 
   console.log(await contract.getAddress());
-  console.log(await contract.connect(owner).msgValue());
-  console.log("===========================================");
-  console.log(await contract.connect(owner).msgData());
-  console.log("===========================================");
-  console.log(await contract.connect(owner).processData());
 }
 
 main().then(() => {

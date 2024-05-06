@@ -19,7 +19,7 @@
     "test": "hardhat run scripts/test-market.ts",
     "test-stake": "hardhat run scripts/test-stake.ts",
     "test-draft": "hardhat run scripts/test-draft.ts",
-    "draft": "hardhat run --network marketplace scripts/draft.ts"
+    "draft": "hardhat run scripts/draft.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
